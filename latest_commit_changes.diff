@@ -1,0 +1,199 @@
+commit 731198ab091906d92494a78ff07393407fc8797e
+Author: Hamad Almeghewli <hamadalmeghewli@Hamads-MacBook-Air.local>
+Date:   Thu Jul 16 09:30:18 2026 +0300
+
+    feat: integrate Ollama service for local vector embedding generation
+
+diff --git a/app.py b/app.py
+index b4ec3ad..7200adf 100644
+--- a/app.py
++++ b/app.py
+@@ -4,7 +4,6 @@ import uuid
+ import csv
+ from flask import Flask, request, jsonify, send_from_directory
+ from flask_cors import CORS
+-from sentence_transformers import SentenceTransformer
+ import numpy as np
+ import requests
+ import chromadb
+@@ -12,14 +11,63 @@ from pypdf import PdfReader
+ import docx
+ from html.parser import HTMLParser
+ from urllib.parse import unquote, urlparse, parse_qs
++import threading
++import time
+ 
+ # 1. Initialize Flask App and Enable CORS
+ app = Flask(__name__, static_folder='frontend/dist', static_url_path='')
+ CORS(app)  # Allows the frontend to make API calls to this backend safely
+ 
+-# 2. Load the Lightweight Semantic Search Model
+-# This downloads/loads the ~80MB all-MiniLM-L6-v2 model and runs it locally on CPU.
+-model = SentenceTransformer('all-MiniLM-L6-v2')
++# 2. Ollama Embeddings Helper & Pre-verification
++def get_ollama_embeddings(inputs, model_name=None):
++    if model_name is None:
++        model_name = os.environ.get("OLLAMA_MODEL", "nomic-embed-text")
++    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
++    url = f"{ollama_url}/api/embed"
++    payload = {
++        "model": model_name,
++        "input": inputs if isinstance(inputs, list) else [inputs]
++    }
++    try:
++        response = requests.post(url, json=payload, timeout=30)
++        response.raise_for_status()
++        embeddings = response.json()["embeddings"]
++        return embeddings if isinstance(inputs, list) else embeddings[0]
++    except Exception as e:
++        print(f"Error calling Ollama API: {e}")
++        raise RuntimeError(f"Failed to generate embeddings via Ollama: {e}")
++
++def ensure_ollama_model():
++    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
++    model_name = os.environ.get("OLLAMA_MODEL", "nomic-embed-text")
++    # Wait up to 30 seconds for Ollama service to start up
++    for _ in range(10):
++        try:
++            requests.get(ollama_url, timeout=2)
++            break
++        except Exception:
++            time.sleep(3)
++    try:
++        url = f"{ollama_url}/api/tags"
++        r = requests.get(url, timeout=5)
++        if r.status_code == 200:
++            models = r.json().get("models", [])
++            if any(m.get("name") == model_name or m.get("name").startswith(model_name + ":") for m in models):
++                print(f"Ollama model '{model_name}' is already present.")
++                return
++        
++        print(f"Ollama model '{model_name}' not found. Pulling it now (this may take a minute)...")
++        pull_url = f"{ollama_url}/api/pull"
++        r = requests.post(pull_url, json={"name": model_name}, timeout=300)
++        if r.status_code == 200:
++            print(f"Successfully pulled Ollama model '{model_name}'.")
++        else:
++            print(f"Warning: Failed to pull Ollama model. Status code: {r.status_code}")
++    except Exception as e:
++        print(f"Warning: Could not connect to Ollama to verify/pull model: {e}")
++
++# Run model pre-pull check in the background
++threading.Thread(target=ensure_ollama_model, daemon=True).start()
+ 
+ # 3. Initialize ChromaDB Client based on environment configuration
+ chroma_mode = os.environ.get("CHROMA_MODE", "persistent").lower()  # Options: 'http', 'persistent', 'ephemeral'
+@@ -181,12 +229,19 @@ def search_api():
+             # 2. Extract snippets to perform semantic ranking
+             snippets = [r["snippet"] for r in web_results]
+             
+-            # 3. Generate embeddings for query and snippets on the fly
+-            web_embeddings = model.encode(snippets, normalize_embeddings=True)
+-            query_embedding = model.encode(query, normalize_embeddings=True)
+-            
+-            # 4. Compute cosine similarity scores
+-            scores = np.dot(web_embeddings, query_embedding)
++            # 3. Generate embeddings for query and snippets using Ollama
++            try:
++                web_embeddings = np.array(get_ollama_embeddings(snippets))
++                query_embedding = np.array(get_ollama_embeddings(query))
++                
++                # 4. Compute cosine similarity scores
++                # Normalize embeddings to ensure dot product is exactly cosine similarity
++                web_embeddings_norm = web_embeddings / np.linalg.norm(web_embeddings, axis=1, keepdims=True)
++                query_embedding_norm = query_embedding / np.linalg.norm(query_embedding)
++                scores = np.dot(web_embeddings_norm, query_embedding_norm)
++            except Exception as e:
++                print(f"Failed to calculate similarity using Ollama: {e}")
++                scores = [0.5] * len(web_results)
+             
+             # 5. Build results list sorted by similarity score
+             results = []
+@@ -208,7 +263,7 @@ def search_api():
+             if count == 0:
+                 return jsonify({"error": "No files have been uploaded to the local database yet. Please upload files first."}), 400
+ 
+-            query_embedding = model.encode(query).tolist()
++            query_embedding = get_ollama_embeddings(query)
+             # Fetch up to 10 matching chunks
+             query_results = collection.query(
+                 query_embeddings=[query_embedding],
+@@ -300,8 +355,8 @@ def upload_file():
+         except Exception:
+             pass
+         
+-        # 3. Generate embeddings using SentenceTransformer
+-        embeddings = model.encode(paragraphs).tolist()
++        # 3. Generate embeddings using Ollama
++        embeddings = get_ollama_embeddings(paragraphs)
+         
+         # 4. Insert into the ChromaDB collection
+         ids = [f"{filename}_chunk_{uuid.uuid4().hex}" for _ in paragraphs]
+diff --git a/docker-compose.yml b/docker-compose.yml
+index b96e866..1660e40 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -6,10 +6,20 @@ services:
+     ports:
+       - "8000:8000"
+     volumes:
+-      - chroma-data:/data
++      - chroma-data:/chroma_data
+     restart: always
+ 
+-  # 2. The Python Backend service
++  # 2. Ollama AI service for generating embeddings locally
++  ollama:
++    image: ollama/ollama:latest
++    container_name: semantic-ollama
++    ports:
++      - "11434:11434"
++    volumes:
++      - ollama-data:/root/.ollama
++    restart: always
++
++  # 3. The Python Backend service
+   backend:
+     build: .
+     container_name: semantic-backend
+@@ -19,11 +29,14 @@ services:
+       - CHROMA_MODE=http
+       - CHROMA_HOST=chroma
+       - CHROMA_PORT=8000
++      - OLLAMA_URL=http://ollama:11434
++      - OLLAMA_MODEL=nomic-embed-text
+     depends_on:
+       - chroma
++      - ollama
+     restart: always
+ 
+-  # 3. The React Frontend service
++  # 4. The React Frontend service
+   frontend:
+     build: ./frontend
+     container_name: semantic-frontend
+@@ -36,4 +49,5 @@ services:
+     restart: always
+ 
+ volumes:
+-  chroma-data:
+\ No newline at end of file
++  chroma-data:
++  ollama-data:
+\ No newline at end of file
+diff --git a/requirements.txt b/requirements.txt
+index 3c1c40b..d3c9a8b 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,7 +1,7 @@
+ flask
+-sentence_transformers
+ requests
+ flask_cors
+ chromadb>=0.4.0
+ pypdf>=3.0.0
+-python-docx>=1.1.0
+\ No newline at end of file
++python-docx>=1.1.0
++numpy>=1.20.0
+\ No newline at end of file

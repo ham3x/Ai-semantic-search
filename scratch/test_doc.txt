@@ -1,0 +1,5 @@
+Google Antigravity is a tool designed to help developers build code quickly and efficiently. It uses agentic capabilities to solve coding tasks.
+
+The system is powered by advanced LLMs that can write code, run commands, and debug errors automatically.
+
+Users can interact with Antigravity through a chat interface or terminal command line using the agy CLI tool.

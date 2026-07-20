@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sleek semantic search console connecting to a Python backend using local SentenceTransformers.">
+  <title>Python + AI Semantic Search Console</title>
+  
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-color: #070913;
+      --panel-bg: rgba(13, 17, 33, 0.7);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --accent-color: #7c3aed;
+      --accent-glow: rgba(124, 58, 237, 0.4);
+      --accent-secondary: #06b6d4;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --success: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 60px 20px;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Outer ambient glows */
+    body::before {
+      content: '';
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      top: -100px;
+      left: -100px;
+      z-index: -1;
+      filter: blur(40px);
+    }
+
+    body::after {
+      content: '';
+      position: absolute;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.15) 0%, transparent 75%);
+      bottom: -100px;
+      right: -100px;
+      z-index: -1;
+      filter: blur(50px);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 750px;
+      display: flex;
+      flex-direction: column;
+      gap: 30px;
+      z-index: 1;
+    }
+
+    header {
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 2.6rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff 40%, var(--text-muted) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    }
+
+    /* Search Bar Input and Button */
+    .search-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .input-text {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      color: #fff;
+      padding: 16px 20px;
+      font-size: 1.05rem;
+      outline: none;
+      transition: all 0.3s ease;
+    }
+
+    .input-text:focus {
+      border-color: var(--accent-color);
+      box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+    }
+
+    .btn {
+      background: var(--accent-color);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 16px 30px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn:hover {
+      background: #8b5cf6;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(124, 58, 237, 0.35);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    /* Results layout */
+    .results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-top: 10px;
+    }
+
+    .result-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      opacity: 0;
+      transform: translateY(15px);
+      animation: slideIn 0.35s ease forwards;
+    }
+
+    @keyframes slideIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .result-title {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .similarity-badge {
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--success);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+    
+    .similarity-badge.medium {
+      background: rgba(245, 158, 11, 0.12);
+      color: #f59e0b;
+      border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+
+    .result-text {
+      font-size: 0.95rem;
+      line-height: 1.55;
+      color: #d1d5db;
+    }
+
+    .score-bar-bg {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .score-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-color), var(--accent-secondary));
+      border-radius: 2px;
+      width: 0%;
+      transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Citations / Sources layout */
+    .source-container {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 12px;
+      margin-top: 4px;
+    }
+
+    .source-link {
+      color: var(--accent-secondary);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .source-link:hover {
+      color: #22d3ee;
+      text-decoration: underline;
+    }
+
+    .no-results {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    .spinner {
+      border: 3px solid rgba(255, 255, 255, 0.05);
+      border-top: 3px solid var(--accent-color);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+      display: none;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>Python AI Semantic Search</h1>
+      <p>Enter a topic below to query the database. Matches will return text citations and source documents.</p>
+    </header>
+
+    <!-- Search Card Console -->
+    <div class="card">
+      <div class="search-bar">
+        <input type="text" id="query" class="input-text" placeholder="Search for anything (e.g. 'Albert Einstein' or 'healthy eating')..." required>
+        <button id="search-btn" class="btn" onclick="performSearch()">
+          <span>Search</span>
+        </button>
+      </div>
+
+      <div id="spinner" class="spinner"></div>
+      
+      <div id="results-list" class="results-list">
+        <div class="no-results">Enter a search query above to query the Python backend.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Performs a fetch request to the Python Flask backend API
+    async function performSearch() {
+      const queryText = document.getElementById('query').value.trim();
+      const resultsContainer = document.getElementById('results-list');
+      const spinner = document.getElementById('spinner');
+
+      if (!queryText) {
+        resultsContainer.innerHTML = '<div class="no-results">Please enter a search query.</div>';
+        return;
+      }
+
+      // Show loader spinner and clear previous results
+      spinner.style.display = 'block';
+      resultsContainer.innerHTML = '';
+
+      try {
+        // Fetch similarity scores from the Python server API
+        const response = await fetch(`/api/search?q=${encodeURIComponent(queryText)}`);
+        if (!response.ok) {
+          throw new Error('API server returned an error');
+        }
+        
+        const results = await response.json();
+        spinner.style.display = 'none';
+
+        if (results.length === 0) {
+          resultsContainer.innerHTML = '<div class="no-results">No matches found.</div>';
+          return;
+        }
+
+        // Render each matching item with citations
+        results.forEach((item, index) => {
+          const scorePercent = (item.score * 100).toFixed(1);
+          let badgeClass = 'similarity-badge';
+          
+          if (item.score < 0.35) {
+            badgeClass += ' medium'; // Lower similarity coloring
+          }
+
+          const card = document.createElement('div');
+          card.className = 'result-card';
+          card.style.animationDelay = `${index * 0.05}s`;
+          card.innerHTML = `
+            <div class="result-header">
+              <span class="result-title">${item.title}</span>
+              <span class="${badgeClass}">Similarity: ${scorePercent}%</span>
+            </div>
+            <div class="result-text">${item.text}</div>
+            <div class="score-bar-bg">
+              <div class="score-bar-fill" id="bar-${index}"></div>
+            </div>
+            <div class="source-container">
+              <span>Source citation:</span>
+              <a href="${item.source}" class="source-link" target="_blank" rel="noopener noreferrer">${item.source}</a>
+            </div>
+          `;
+          resultsContainer.appendChild(card);
+
+          // Animate the fill bars in the next rendering tick
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              const bar = document.getElementById(`bar-${index}`);
+              if (bar) bar.style.width = `${Math.max(0, Math.min(100, item.score * 100))}%`;
+            }, 50);
+          });
+        });
+
+      } catch (err) {
+        spinner.style.display = 'none';
+        resultsContainer.innerHTML = `<div class="no-results" style="color: #ef4444;">Error connecting to Python backend server. Make sure it is running on port 5000.</div>`;
+        console.error(err);
+      }
+    }
+
+    // Trigger search when user presses Enter key in the input box
+    document.getElementById('query').addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') {
+        performSearch();
+      }
+    });
+  </script>
+</body>
+</html>

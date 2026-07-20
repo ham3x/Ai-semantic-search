@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.38.0 (HEAD)
+  labels:
+    io.kompose.service: backend
+  name: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: backend
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert
+        kompose.version: 1.38.0 (HEAD)
+      labels:
+        io.kompose.service: backend
+    spec:
+      containers:
+        - env:
+            - name: CHROMA_HOST
+              value: chromadb
+            - name: CHROMA_MODE
+              value: http
+            - name: CHROMA_PORT
+              value: "8000"
+            - name: DATABASE_URL
+              value: mysql+pymysql://myuser:mypassword@mysql-db:3306/mydb
+            - name: OLLAMA_MODEL
+              value: nomic-embed-text
+            - name: OLLAMA_URL
+              value: http://ollama:11434
+          image: backend:latest
+          imagePullPolicy: IfNotPresent
+          name: semantic-backend
+          ports:
+            - containerPort: 5002
+              protocol: TCP
+      restartPolicy: Always

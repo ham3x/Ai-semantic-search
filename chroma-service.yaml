@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.38.0 (HEAD)
+  labels:
+    io.kompose.service: chroma
+  name: chromadb
+spec:
+  ports:
+    - name: "8000"
+      port: 8000
+      targetPort: 8000
+  selector:
+    io.kompose.service: chroma

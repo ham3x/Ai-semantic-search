@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert
+    kompose.version: 1.38.0 (HEAD)
+  labels:
+    io.kompose.service: chroma
+  name: chroma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: chroma
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert
+        kompose.version: 1.38.0 (HEAD)
+      labels:
+        io.kompose.service: chroma
+    spec:
+      containers:
+        - env:
+            - name: IS_PERSISTENT
+              value: "TRUE"
+            - name: PERSIST_DIRECTORY
+              value: /data
+          image: chromadb/chroma:latest
+          name: semantic-chroma
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /data
+              name: chroma-data
+      restartPolicy: Always
+      volumes:
+        - name: chroma-data
+          persistentVolumeClaim:
+            claimName: chroma-data

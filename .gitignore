@@ -1,0 +1,7 @@
+.venv
+node_modules
+dist
+chroma_db/
+app copy.py
+scratch/
+*.docx

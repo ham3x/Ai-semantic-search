@@ -1,0 +1,76 @@
+services:
+  # 1. ChromaDB Vector Database service
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: semantic-chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/data
+    restart: always
+
+  # 2. Ollama AI service for generating embeddings locally
+  ollama:
+    image: ollama/ollama:latest
+    container_name: semantic-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: always
+
+  # 3. The Python Backend service
+  backend:
+    build: .
+    container_name: semantic-backend
+    ports:
+      - "5001:5002"
+    environment:
+      - CHROMA_MODE=http
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=nomic-embed-text
+      - DATABASE_URL=mysql+pymysql://myuser:mypassword@mysql-db:3306/mydb
+    depends_on:
+      - chroma
+      - ollama
+      - mysql-db
+    restart: always
+
+  # 4. The React Frontend service
+  frontend:
+    build: ./frontend
+    container_name: semantic-frontend
+    environment:
+      VITE_API_URL: http://backend:5002
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    restart: always
+
+# 5. The MySQL Database Service                                              
+  mysql-db:                                                                    
+        image: mysql:8.0                                                           
+        container_name: database-mysql                                             
+        ports:
+        - "3306:3306"
+        environment:
+          - MYSQL_ROOT_PASSWORD=myrootpassword
+          - MYSQL_DATABASE=mydb
+          - MYSQL_USER=myuser
+          - MYSQL_PASSWORD=mypassword
+        volumes:
+          - mysql-data:/var/lib/mysql
+        restart: always
+  
+    # Global volumes (Only written once at the very bottom)
+volumes:
+    chroma-data:
+    ollama-data:
+    mysql-data:
+    
