@@ -8,7 +8,7 @@ jobs:
     - uses: docker/login-action@v3 
       with: 
         username: ${{secrets.ham3x }} 
-        password: ${{secrets.DOCKERHUB_TOKEN }} 
+        password: ${{secrets.ham3x }} 
     - uses: docker/login-action@v3
       with:
         registry: ghcr.io
