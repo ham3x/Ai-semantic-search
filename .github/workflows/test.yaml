@@ -14,11 +14,11 @@ jobs:
         registry: ghcr.io
         username: ${{github.actor}}
         password: ${{secrets.GITHUB_TOKEN}} 
-    - run: docker build -t ham3x/AI-SEMANTIC-SEARCH:latest .
-    - run: docker build -t ham3x/AI-SEMANTIC-SEARCH:latest .
-    - run:  docker build -t ghcr.io/ham3x/AI-SEMANTIC-SEARCH:latest .
-    - run: docker push ham3x/AI-SEMANTIC-SEARCH:latest 
-    - run: docker push ghcr.io/ham3x/AI-SEMANTIC-SEARCH:latest
+    - run: docker build -t ham3x/ai-semantic-search:latest .
+    - run: docker build -t ham3x/ai-semantic-search:latest .
+    - run:  docker build -t ghcr.io/ham3x/ai-semantic-search:latest .
+    - run: docker push ham3x/ai-semantic-search:latest 
+    - run: docker push ghcr.io/ham3x/ai-semantic-search:latest
 
 
 
