@@ -5,6 +5,11 @@ metadata:
   namespace: argocd
 spec:
   project: default 
+  syncPolicy:
+    automated:
+      prune: TRUE
+      selfHeal: TRUE
+
   source:
     repoURL: https://github.com/ham3x/Ai-semantic-search
     targetRevision: main          
@@ -12,6 +17,7 @@ spec:
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: default
+
 
 
 
