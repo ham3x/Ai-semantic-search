@@ -20,14 +20,28 @@ spec:
       labels:
         io.kompose.service: frontend
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: harbor-registry-secret
       containers:
         - env:
             - name: VITE_API_URL
               value: http://backend:5001
-          image: frontend:latest
-          imagePullPolicy: IfNotPresent
+          image: registry.dev.estishraf.gov.sa/coop/frontend:latest
+          imagePullPolicy: Always
           name: semantic-frontend
           ports:
             - containerPort: 3000
               protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 15
       restartPolicy: Always

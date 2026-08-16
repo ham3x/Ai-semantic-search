@@ -22,13 +22,17 @@ spec:
       labels:
         io.kompose.service: chroma
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: harbor-registry-secret
       containers:
         - env:
             - name: IS_PERSISTENT
               value: "TRUE"
             - name: PERSIST_DIRECTORY
               value: /data
-          image: chromadb/chroma:latest
+          image: registry.dev.estishraf.gov.sa/coop/chroma:latest
           name: semantic-chroma
           ports:
             - containerPort: 8000
@@ -36,6 +40,22 @@ spec:
           volumeMounts:
             - mountPath: /data
               name: chroma-data
+          startupProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
       restartPolicy: Always
       volumes:
         - name: chroma-data

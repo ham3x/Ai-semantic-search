@@ -20,22 +20,31 @@ spec:
       labels:
         io.kompose.service: backend
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: harbor-registry-secret
       containers:
-        - env:
+        - envFrom:
+            - secretRef:
+                name: mysql-secret
+          env:
             - name: CHROMA_HOST
               value: chromadb
             - name: CHROMA_MODE
               value: http
             - name: CHROMA_PORT
               value: "8000"
-            - name: DATABASE_URL
-              value: mysql+pymysql://myuser:mypassword@mysql-db:3306/mydb
-            - name: OLLAMA_MODEL
-              value: nomic-embed-text
-            - name: OLLAMA_URL
-              value: http://ollama:11434
-          image: backend:latest
-          imagePullPolicy: IfNotPresent
+            - name: EMBEDDING_MODEL
+              value: text-embedding-bge-large
+            - name: EMBEDDING_API_URL
+              value: http://litellm-service.ai-serving.svc:4000/v1
+            - name: LITELLM_API_URL
+              value: http://litellm-service.ai-serving.svc:4000/v1
+            - name: LLM_MODEL
+              value: llama-3-8b
+          image: registry.dev.estishraf.gov.sa/coop/backend:latest
+          imagePullPolicy: Always
           name: semantic-backend
           ports:
             - containerPort: 5002

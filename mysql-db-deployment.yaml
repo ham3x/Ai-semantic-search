@@ -22,24 +22,60 @@ spec:
       labels:
         io.kompose.service: mysql-db
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: harbor-registry-secret
+      initContainers:
+        - name: cleanup-corrupted-db
+          image: registry.dev.estishraf.gov.sa/coop/mysql:8.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - bash
+            - -c
+            - |
+              if [ ! -d /var/lib/mysql/mysql ]; then
+                echo "Preparing clean MySQL data volume with correct permissions..."
+                rm -rf /var/lib/mysql/* /var/lib/mysql/.* 2>/dev/null || true
+              fi
+              chown -R 999:999 /var/lib/mysql 2>/dev/null || chmod -R 777 /var/lib/mysql
+          volumeMounts:
+            - mountPath: /var/lib/mysql
+              name: mysql-data
+              subPath: mysql-data-v3
       containers:
-        - env:
-            - name: MYSQL_DATABASE
-              value: mydb
-            - name: MYSQL_PASSWORD
-              value: mypassword
-            - name: MYSQL_ROOT_PASSWORD
-              value: myrootpassword
-            - name: MYSQL_USER
-              value: myuser
-          image: mysql:8.0
+        - envFrom:
+            - secretRef:
+                name: mysql-secret
+          image: registry.dev.estishraf.gov.sa/coop/mysql:8.0
+          imagePullPolicy: Always
           name: database-mysql
+          args:
+            - "--default-authentication-plugin=mysql_native_password"
           ports:
             - containerPort: 3306
               protocol: TCP
           volumeMounts:
             - mountPath: /var/lib/mysql
               name: mysql-data
+              subPath: mysql-data-v3
+          startupProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3306
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            failureThreshold: 5
       restartPolicy: Always
       volumes:
         - name: mysql-data

@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-v1.40.0
+    container_name: litellm-proxy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./k8s/01-litellm-configmap.yaml:/app/config_raw.yaml
+      - ./docker-config.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]
+    environment:
+      - DISABLE_TELEMETRY=TRUE
+    restart: unless-stopped
+
+  vllm:
+    image: vllm/vllm-openai:v0.5.4
+    container_name: vllm-server
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - VLLM_NO_USAGE_STATS=1
+    volumes:
+      - ./models:/models:ro
+    command: >
+      --model /models/llama-3-8b-instruct
+      --served-model-name llama-3-8b
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.90
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: tei-embedding
+    ports:
+      - "8080:80"
+    environment:
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    volumes:
+      - ./models:/models:ro
+    command: ["--model-id", "/models/bge-large-en-v1.5", "--port", "80", "--hostname", "0.0.0.0"]
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: qdrant-db
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:

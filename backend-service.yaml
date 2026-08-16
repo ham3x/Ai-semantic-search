@@ -8,9 +8,11 @@ metadata:
     io.kompose.service: backend
   name: backend
 spec:
+  type: NodePort
   ports:
     - name: "5001"
       port: 5001
       targetPort: 5002
+      nodePort: 30081
   selector:
     io.kompose.service: backend

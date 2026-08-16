@@ -1,0 +1,3 @@
+autoSync: 'true'
+destNamespace: 'llm'
+appName: 'vllmstack-qwen-qwen3-omni-30b-a3b-thinking'

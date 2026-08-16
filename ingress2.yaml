@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-semantic-search-ingress
+  namespace: default
+  annotations:
+    # Add annotations specific to your ingress controller, e.g., for NGINX:
+    # nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx # Defines which Ingress Controller should manage this
+  tls:
+  - hosts:
+    - coop.ingress.dev.estishraf.gov.sa
+    secretName: coop-tls-secret
+  rules:
+  - host: coop.ingress.dev.estishraf.gov.sa
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 3000
+      # - path: /api
+      #   pathType: Prefix
+      #   backend:
+      #     service:
+      #       name: my-api-service
+      #       port:
+      #         number: 8080

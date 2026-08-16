@@ -5,3 +5,4 @@ chroma_db/
 app copy.py
 scratch/
 *.docx
+.sh

@@ -1,0 +1,104 @@
+vllm-stack:
+  servingEngineSpec:
+    enableEngine: true
+
+    imagePullPolicy: IfNotPresent
+    runtimeClassName: "nvidia"
+
+    strategy:
+      type: Recreate
+
+    serviceMonitor:
+      enabled: true
+
+    labels:
+      environment: "dev"
+      release: "qwen3-omni-30b-thinking"
+
+    # nodeSelector:
+    #   kubernetes.io/hostname: kworker17g
+
+    tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+    startupProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 200
+      periodSeconds: 30
+      failureThreshold: 100
+      timeoutSeconds: 10
+
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 0
+      periodSeconds: 60
+      failureThreshold: 5
+      timeoutSeconds: 30
+
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 0
+      periodSeconds: 15
+      failureThreshold: 3
+      timeoutSeconds: 10
+      successThreshold: 1
+
+    modelSpec:
+      - name: qwen-omni-30b-thinking
+        enabled: true
+        repository: vllm/vllm-openai
+        tag: "v0.24.0"
+
+        env:
+          - name: HF_HUB_OFFLINE
+            value: "1"
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+          - name: VLLM_DO_NOT_TRACK
+            value: "1"
+          - name: VLLM_NO_USAGE_STATS
+            value: "1"
+          - name: VLLM_USE_V1
+            value: "0"
+
+        extraVolumes:
+          - name: models-storage
+            persistentVolumeClaim:
+              claimName: models-storage
+
+        extraVolumeMounts:
+          - name: models-storage
+            mountPath: /models
+            readOnly: true
+
+        modelURL: "/models/Qwen/Qwen3-Omni-30B-A3B-Thinking"
+  
+        replicaCount: 1
+  
+        requestGPU: 1
+        requestCPU: "16"
+        requestMemory: "120Gi"
+        limitCPU: "16"
+        limitMemory: "120Gi"
+        shmSize: "96Gi"
+  
+        vllmConfig:
+          tensorParallelSize: 1
+          enablePrefixCaching: true
+          gpuMemoryUtilization: 0.95
+          maxModelLen: 65536
+          enableChunkedPrefill: true
+          extraArgs:
+              - "--served-model-name"
+              - "Qwen/Qwen3-Omni-30B-A3B-Thinking"
+      
+  routerSpec:
+    enableRouter: false 

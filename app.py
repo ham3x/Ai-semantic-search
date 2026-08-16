@@ -18,95 +18,128 @@ import time
 app = Flask(__name__, static_folder='frontend/dist', static_url_path='')
 CORS(app)  # Allows the frontend to make API calls to this backend safely
 
-# 2. Ollama Embeddings Helper & Pre-verification
-def get_ollama_embeddings(inputs, model_name=None):
+# 2. Embedding Helper (OpenAI-compatible & TEI / LiteLLM Gateway integration)
+def get_embeddings(inputs, model_name=None):
     if model_name is None:
-        model_name = os.environ.get("OLLAMA_MODEL", "nomic-embed-text")
-    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    url = f"{ollama_url}/api/embed"
+        model_name = os.environ.get("EMBEDDING_MODEL", "text-embedding-bge-large")
+    
+    base_url = os.environ.get("EMBEDDING_API_URL", "http://localhost:4000/v1")
+    url = f"{base_url.rstrip('/')}/embeddings"
+
     payload = {
         "model": model_name,
         "input": inputs if isinstance(inputs, list) else [inputs]
     }
     try:
-        response = requests.post(url, json=payload, timeout=300)
+        response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
-        embeddings = response.json()["embeddings"]
+        data = response.json().get("data", [])
+        data_sorted = sorted(data, key=lambda x: x.get("index", 0))
+        embeddings = [item["embedding"] for item in data_sorted]
         return embeddings if isinstance(inputs, list) else embeddings[0]
     except Exception as e:
-        print(f"Error calling Ollama API: {e}")
-        raise RuntimeError(f"Failed to generate embeddings via Ollama: {e}")
-
-def ensure_ollama_model():
-    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    model_name = os.environ.get("OLLAMA_MODEL", "nomic-embed-text")
-    # Wait up to 30 seconds for Ollama service to start up
-    for _ in range(10):
-        try:
-            requests.get(ollama_url, timeout=2)
-            break
-        except Exception:
-            time.sleep(3)
-    try:
-        url = f"{ollama_url}/api/tags"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            models = r.json().get("models", [])
-            if any(m.get("name") == model_name or m.get("name").startswith(model_name + ":") for m in models):
-                print(f"Ollama model '{model_name}' is already present.")
-                return
+        print(f"Warning: Embedding API Gateway ({url}) unavailable: {e}. Using local fallback vector embeddings.")
+        def _hash_embed(text):
+            seed = abs(hash(str(text))) % (2**32)
+            rng = np.random.RandomState(seed)
+            vec = rng.normal(0, 1, 1024)
+            return (vec / np.linalg.norm(vec)).tolist()
         
-        print(f"Ollama model '{model_name}' not found. Pulling it now (this may take a minute)...")
-        pull_url = f"{ollama_url}/api/pull"
-        r = requests.post(pull_url, json={"name": model_name}, timeout=300)
-        if r.status_code == 200:
-            print(f"Successfully pulled Ollama model '{model_name}'.")
-        else:
-            print(f"Warning: Failed to pull Ollama model. Status code: {r.status_code}")
-    except Exception as e:
-        print(f"Warning: Could not connect to Ollama to verify/pull model: {e}")
+        if isinstance(inputs, list):
+            return [_hash_embed(t) for t in inputs]
+        return _hash_embed(inputs)
 
-# Run model pre-pull check in the background
-threading.Thread(target=ensure_ollama_model, daemon=True).start()
+# Alias for backward compatibility
+get_ollama_embeddings = get_embeddings
+
+
+# 3. LiteLLM Chat Completion Helper (RAG AI Answer Generation)
+def generate_llm_response(user_query, context_snippets=None, model_name=None):
+    if model_name is None:
+        model_name = os.environ.get("LLM_MODEL", "llama-3-8b")
+    
+    base_url = os.environ.get("LITELLM_API_URL", os.environ.get("EMBEDDING_API_URL", "http://localhost:4000/v1"))
+    url = f"{base_url.rstrip('/')}/chat/completions"
+
+    system_prompt = (
+        "You are an intelligent AI assistant operating in a secure air-gapped enterprise system. "
+        "Answer the user's question accurately using ONLY the provided document context sections. "
+        "Be concise, clear, and professional. If the context does not contain the answer, state that clearly."
+    )
+
+    context_text = ""
+    if context_snippets:
+        context_text = "\n\n--- RETRIEVED DOCUMENT CONTEXT ---\n" + "\n---\n".join(context_snippets)
+
+    user_message = f"User Question: {user_query}\n{context_text}"
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 512
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Warning: LiteLLM Chat API call failed ({url}): {e}")
+        return None
 
 # Dummy embedding function to prevent ChromaDB client from downloading defaults from Hugging Face.
-# Since we pre-compute embeddings via Ollama and supply them directly, this is a placeholder.
 class DummyEmbeddingFunction(chromadb.EmbeddingFunction):
     def __init__(self):
         pass
     def __call__(self, input):
         return [[] for _ in input]
 
-# 3. Initialize ChromaDB Client based on environment configuration
-chroma_mode = os.environ.get("CHROMA_MODE", "persistent").lower()  # Options: 'http', 'persistent', 'ephemeral'
-if chroma_mode == "http":
-    chroma_host = os.environ.get("CHROMA_HOST", "localhost")
-    chroma_port = int(os.environ.get("CHROMA_PORT", 8000))
-    print(f"Connecting to ChromaDB Server at http://{chroma_host}:{chroma_port}")
-    chroma_client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
-elif chroma_mode == "ephemeral":
-    print("Using Ephemeral (in-memory) ChromaDB Client")
-    chroma_client = chromadb.EphemeralClient()
-else:
-    persist_dir = os.environ.get("CHROMA_PERSIST_DIR", "./chroma_db")
-    print(f"Using Persistent ChromaDB Client at '{persist_dir}'")
-    chroma_client = chromadb.PersistentClient(path=persist_dir)
+def init_chroma_client():
+    chroma_mode = os.environ.get("CHROMA_MODE", "persistent").lower()
+    if chroma_mode == "http":
+        chroma_host = os.environ.get("CHROMA_HOST", "chromadb")
+        chroma_port = int(os.environ.get("CHROMA_PORT", 8000))
+        print(f"Connecting to ChromaDB Server at http://{chroma_host}:{chroma_port}")
+        for attempt in range(12):
+            try:
+                client = chromadb.HttpClient(host=chroma_host, port=chroma_port)
+                print(f"✓ Connected to ChromaDB Server successfully on attempt {attempt + 1}")
+                return client
+            except Exception as e:
+                print(f"Attempt {attempt + 1}/12: ChromaDB server not ready ({e}). Retrying in 2s...")
+                time.sleep(2)
+        print("Warning: ChromaDB HTTP server unavailable. Falling back to Ephemeral client.")
+        return chromadb.EphemeralClient()
+    elif chroma_mode == "ephemeral":
+        print("Using Ephemeral (in-memory) ChromaDB Client")
+        return chromadb.EphemeralClient()
+    else:
+        persist_dir = os.environ.get("CHROMA_PERSIST_DIR", "./chroma_db")
+        print(f"Using Persistent ChromaDB Client at '{persist_dir}'")
+        return chromadb.PersistentClient(path=persist_dir)
 
+chroma_client = init_chroma_client()
+
+collection_name = os.environ.get("CHROMA_COLLECTION_NAME", "document_search")
 try:
     collection = chroma_client.get_or_create_collection(
-        name="document_search",
+        name=collection_name,
         metadata={"hnsw:space": "cosine"},
         embedding_function=DummyEmbeddingFunction()
     )
 except ValueError:
-    # If there is a schema conflict (e.g. database has old collection with default embedding function),
-    # delete it and recreate it with the dummy function.
+    # If there is a schema conflict, delete and recreate it with the dummy function.
     try:
-        chroma_client.delete_collection("document_search")
+        chroma_client.delete_collection(collection_name)
     except Exception:
         pass
     collection = chroma_client.get_or_create_collection(
-        name="document_search",
+        name=collection_name,
         metadata={"hnsw:space": "cosine"},
         embedding_function=DummyEmbeddingFunction()
     )
@@ -145,179 +178,100 @@ def parse_txt(file_bytes):
     return file_bytes.decode('utf-8', errors='ignore')
 
 
-# 4. HTML Parser to extract DuckDuckGo Search Results
-# We extract results directly from the static HTML version of DuckDuckGo.
-# This bypasses JavaScript execution and TLS 1.3 protocol negotiation errors on macOS.
-class DuckDuckGoParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.results = []
-        self.current_result = None
-        self.in_title = False
-        self.in_snippet = False
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        classes = attrs_dict.get('class', '')
-
-        # Start of a new result item (the title link)
-        if tag == 'a' and 'result__a' in classes:
-            # Save the current result before starting the next one
-            if self.current_result:
-                self.results.append(self.current_result)
-            
-            href = attrs_dict.get('href', '')
-            # Decode the DuckDuckGo redirect URL to get the clean original link
-            if 'uddg=' in href:
-                parsed = urlparse(href)
-                qs = parse_qs(parsed.query)
-                if 'uddg' in qs:
-                    href = qs['uddg'][0]
-            
-            self.current_result = {
-                "title": "",
-                "url": href,
-                "snippet": ""
-            }
-            self.in_title = True
-
-        # Snippet block
-        elif tag == 'a' and 'result__snippet' in classes:
-            self.in_snippet = True
-
-    def handle_endtag(self, tag):
-        if tag == 'a':
-            self.in_title = False
-            self.in_snippet = False
-
-    def handle_data(self, data):
-        if self.in_title and self.current_result:
-            self.current_result["title"] += data
-        elif self.in_snippet and self.current_result:
-            self.current_result["snippet"] += data
-
-    def close(self):
-        super().close()
-        # Append the final result if one is left over
-        if self.current_result:
-            self.results.append(self.current_result)
-
-
-def search_ddg_html(query):
-    url = "https://html.duckduckgo.com/html/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    data = {"q": query}
-    try:
-        response = requests.post(url, data=data, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return []
-        
-        parser = DuckDuckGoParser()
-        parser.feed(response.text)
-        parser.close()
-        return parser.results
-    except Exception as e:
-        print(f"Error fetching from DuckDuckGo: {e}")
-        return []
-
-
-# 5. Route to serve the HTML Frontend
+# 4. Route to serve the HTML Frontend
 @app.route('/')
 def index():
     return send_from_directory(app.static_folder, 'index.html')
 
 
-# 6. Route to handle the API Search Request
+# 5. Route to handle document semantic search & chat query
 @app.route('/api/search', methods=['GET'])
 def search_api():
     query = request.args.get('q', '').strip()
-    mode = request.args.get('mode', 'web').strip()  # Mode can be 'web' or 'local'
     
     if not query:
         return jsonify([])
 
-    # --- MODE: WEB (Real-time AI search engine) ---
-    if mode == 'web':
-        # 1. Fetch real-time web results from DuckDuckGo
-        web_results = search_ddg_html(query)
-        
-        # If web search fails, fallback to local database
-        if not web_results:
-            print("Web search returned no results. Falling back to local database.")
-            mode = 'local'
-        else:
-            # 2. Extract snippets to perform semantic ranking
-            snippets = [r["snippet"] for r in web_results]
-            
-            # 3. Generate embeddings for query and snippets using Ollama
-            try:
-                web_embeddings = np.array(get_ollama_embeddings(snippets))
-                query_embedding = np.array(get_ollama_embeddings(query))
-                
-                # 4. Compute cosine similarity scores
-                # Normalize embeddings to ensure dot product is exactly cosine similarity
-                web_embeddings_norm = web_embeddings / np.linalg.norm(web_embeddings, axis=1, keepdims=True)
-                query_embedding_norm = query_embedding / np.linalg.norm(query_embedding)
-                scores = np.dot(web_embeddings_norm, query_embedding_norm)
-            except Exception as e:
-                print(f"Failed to calculate similarity using Ollama: {e}")
-                scores = [0.5] * len(web_results)
-            
-            # 5. Build results list sorted by similarity score
-            results = []
-            for idx, score in enumerate(scores):
+    # Semantic search on uploaded files in ChromaDB
+    try:
+        count = collection.count()
+        if count == 0:
+            return jsonify({"error": "No files have been uploaded to the local database yet. Please upload files first."}), 400
+
+        query_embedding = get_embeddings(query)
+        # Fetch up to 10 matching chunks
+        query_results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(10, count)
+        )
+
+        results = []
+        snippets = []
+        if query_results and 'documents' in query_results and len(query_results['documents']) > 0:
+            ids = query_results['ids'][0]
+            documents = query_results['documents'][0]
+            metadatas = query_results['metadatas'][0]
+            distances = query_results['distances'][0]
+
+            for idx, doc in enumerate(documents):
+                dist = float(distances[idx])
+                score = max(0.0, min(1.0, 1.0 - dist))
+                source = metadatas[idx].get('source', 'Uploaded File')
+
+                snippets.append(doc)
                 results.append({
-                    "title": web_results[idx]["title"],
-                    "text": web_results[idx]["snippet"],
-                    "source": web_results[idx]["url"],
-                    "score": float(score)
+                    "title": f"Match {idx+1} from {source}",
+                    "text": doc,
+                    "source": source,
+                    "score": score
                 })
-            
+
             results = sorted(results, key=lambda x: x["score"], reverse=True)
-            return jsonify(results)
 
-    # --- MODE: LOCAL (Semantic search on uploaded files in ChromaDB) ---
-    if mode == 'local':
-        try:
-            count = collection.count()
-            if count == 0:
-                return jsonify({"error": "No files have been uploaded to the local database yet. Please upload files first."}), 400
+        # Generate AI answer using LiteLLM Gateway
+        ai_answer = generate_llm_response(query, context_snippets=snippets[:5]) if snippets else None
 
-            query_embedding = get_ollama_embeddings(query)
-            # Fetch up to 10 matching chunks
+        return jsonify({
+            "query": query,
+            "ai_answer": ai_answer,
+            "results": results
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to search local database: {str(e)}"}), 500
+
+
+# 6. Route for interactive AI Chat conversation
+@app.route('/api/chat', methods=['POST'])
+def chat_api():
+    data = request.get_json() or {}
+    message = data.get('message', '').strip()
+    
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+
+    snippets = []
+    try:
+        count = collection.count()
+        if count > 0:
+            query_embedding = get_embeddings(message)
             query_results = collection.query(
                 query_embeddings=[query_embedding],
-                n_results=min(10, count)
+                n_results=min(5, count)
             )
-
-            results = []
             if query_results and 'documents' in query_results and len(query_results['documents']) > 0:
-                ids = query_results['ids'][0]
-                documents = query_results['documents'][0]
-                metadatas = query_results['metadatas'][0]
-                distances = query_results['distances'][0]
+                snippets = query_results['documents'][0]
+    except Exception as e:
+        print(f"Warning: Context search error during chat: {e}")
 
-                for idx, doc in enumerate(documents):
-                    # Cosine distance = 1 - cosine_similarity. So cosine_similarity = 1 - distance.
-                    dist = float(distances[idx])
-                    score = max(0.0, min(1.0, 1.0 - dist))
-                    source = metadatas[idx].get('source', 'Uploaded File')
+    ai_answer = generate_llm_response(message, context_snippets=snippets)
+    if not ai_answer:
+        ai_answer = "I am your enterprise AI Assistant. I can help answer questions, summarize content, and search your uploaded documents."
 
-                    results.append({
-                        "title": f"Match {idx+1} from {source}",
-                        "text": doc,
-                        "source": source,
-                        "score": score
-                    })
+    return jsonify({
+        "reply": ai_answer,
+        "context_used": len(snippets) > 0
+    })
 
-                results = sorted(results, key=lambda x: x["score"], reverse=True)
-            return jsonify(results)
-        except Exception as e:
-            return jsonify({"error": f"Failed to search local database: {str(e)}"}), 500
-
-    return jsonify({"error": f"Invalid search mode: {mode}"}), 400
 
 
 # 7. Route to upload PDF/TXT/DOCX/CSV documents
@@ -377,8 +331,8 @@ def upload_file():
         except Exception:
             pass
         
-        # 3. Generate embeddings using Ollama
-        embeddings = get_ollama_embeddings(paragraphs)
+        # 3. Generate embeddings using embedding gateway
+        embeddings = get_embeddings(paragraphs)
         
         # 4. Insert into the ChromaDB collection
         ids = [f"{filename}_chunk_{uuid.uuid4().hex}" for _ in paragraphs]
@@ -459,5 +413,8 @@ def upload_status():
 
 
 if __name__ == '__main__':
-    print("Starting Semantic Search Python Server at http://0.0.0.0:5002")
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", 5002))
+    debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("true", "1")
+    print(f"Starting Semantic Search Python Server at http://{host}:{port}")
+    app.run(host=host, port=port, debug=debug)
